@@ -20,6 +20,8 @@ from isaaclab.managers.manager_base import ManagerTermBase
 from isaaclab.managers.manager_term_cfg import RewardTermCfg
 from isaaclab.sensors import ContactSensor, RayCaster
 
+import isaaclab.utils.math as math_utils
+
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
@@ -80,11 +82,22 @@ def lin_vel_z_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntity
     return torch.square(asset.data.root_lin_vel_b[:, 2])
 
 
+def lin_vel_z_w_frame_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    asset: RigidObject = env.scene[asset_cfg.name]
+    return torch.square(asset.data.root_lin_vel_w[:, 2])
+
+
 def ang_vel_xy_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
     """Penalize xy-axis base angular velocity using L2 squared kernel."""
     # extract the used quantities (to enable type-hinting)
     asset: RigidObject = env.scene[asset_cfg.name]
     return torch.sum(torch.square(asset.data.root_ang_vel_b[:, :2]), dim=1)
+
+def ang_vel_xy_w_frame_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    """Penalize xy-axis base angular velocity using L2 squared kernel."""
+    # extract the used quantities (to enable type-hinting)
+    asset: RigidObject = env.scene[asset_cfg.name]
+    return torch.sum(torch.square(asset.data.root_ang_vel_w[:, :2]), dim=1)
 
 
 def flat_orientation_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
@@ -96,6 +109,15 @@ def flat_orientation_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = Scen
     asset: RigidObject = env.scene[asset_cfg.name]
     return torch.sum(torch.square(asset.data.projected_gravity_b[:, :2]), dim=1)
 
+def body_orientation_diff_rew(env: ManagerBasedRLEnv, 
+                              command_name: str,
+                              asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    asset: RigidObject = env.scene[asset_cfg.name]
+    body_quat = asset.data.body_quat_w[:, asset_cfg.body_ids]
+    target_quat = env.command_manager.get_command(command_name)[:,2:]   # [qw, qx, qy, qz]
+    quat_diff = math_utils.quat_mul(body_quat.squeeze(1), math_utils.quat_conjugate(target_quat))
+    rot_dist = 2.0 * torch.asin(torch.clamp(torch.norm(quat_diff[:, 1:4], p=2, dim=-1), max=1.0))
+    return 1.0 / (torch.abs(rot_dist) + 0.1)
 
 def base_height_l2(
     env: ManagerBasedRLEnv,

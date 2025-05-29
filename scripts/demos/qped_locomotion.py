@@ -44,9 +44,9 @@ from isaaclab.utils.pretrained_checkpoint import get_published_pretrained_checkp
 
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
 
-from isaaclab_tasks.manager_based.locomotion.velocity.config.Qped.flat_env_cfg_v1 import QpedFlatEnvCfg_PLAY
+from isaaclab_tasks.manager_based.locomotion.velocity.config.Qped.v7.flat_env_cfg import QpedFlatEnvCfg_PLAY
 
-TASK = "Isaac-Velocity-Flat-Qped-Play-v1"
+TASK = "Isaac-Velocity-Flat-Qped-Play-v7"
 RL_LIBRARY = "rsl_rl"
 
 class G1TrunkFlatDemo:
@@ -75,15 +75,18 @@ class G1TrunkFlatDemo:
         env_cfg.scene.num_envs = 25
         env_cfg.episode_length_s = 1000000
         env_cfg.curriculum = None
-        env_cfg.commands.base_velocity.ranges.lin_vel_x = (0.0, 1.0)
-        env_cfg.commands.base_velocity.ranges.heading = (-1.0, 1.0)
+        env_cfg.commands.base_velocity.ranges.lin_vel_x = (-1.0, 1.0)
+        env_cfg.commands.base_velocity.ranges.lin_vel_y = (-1.0, 1.0)
+        env_cfg.commands.base_velocity.ranges.ang_vel_z = (-1.0, 1.0)
+        env_cfg.commands.base_velocity.ranges.heading = (0.0, 0.0)
+        env_cfg.commands.base_velocity.debug_vis = False
         # wrap around environment for rsl-rl
         self.env = RslRlVecEnvWrapper(ManagerBasedRLEnv(cfg=env_cfg))
         self.device = self.env.unwrapped.device
         # load previously trained model
         ppo_runner = OnPolicyRunner(self.env, agent_cfg.to_dict(), log_dir=None, device=self.device)
         # ppo_runner.load(checkpoint)
-        ppo_runner.load("/home/kezhuo/qped_rl_isaaclab/IsaacLab/logs/rsl_rl/qped_flat/2025-05-26_18-27-22/model_1499.pt")
+        ppo_runner.load("/home/kezhuo/qped_rl_isaaclab/IsaacLab/logs/rsl_rl/qped_flat/2025-05-27_19-10-57/model_9050.pt")
         # obtain the trained policy for inference
         self.policy = ppo_runner.get_inference_policy(device=self.device)
 
@@ -117,13 +120,15 @@ class G1TrunkFlatDemo:
         self._input = carb.input.acquire_input_interface()
         self._keyboard = omni.appwindow.get_default_app_window().get_keyboard()
         self._sub_keyboard = self._input.subscribe_to_keyboard_events(self._keyboard, self._on_keyboard_event)
-        T = 0.5
-        R = 0.25
+        T = 2.0
+        R = 1.0
         self._key_to_control = {
             "UP": torch.tensor([T, 0.0, 0.0, 0.0], device=self.device),
-            "DOWN": torch.tensor([0.0, 0.0, 0.0, 0.0], device=self.device),
-            "LEFT": torch.tensor([0.0, 0.0, 0.0, -R], device=self.device),
-            "RIGHT": torch.tensor([0.0, 0.0, 0.0, R], device=self.device),
+            "DOWN": torch.tensor([-T, 0.0, 0.0, 0.0], device=self.device),
+            "LEFT": torch.tensor([0.0, 0.0, -R, 0.0], device=self.device),
+            "RIGHT": torch.tensor([0.0, 0.0, R, 0.0], device=self.device),
+            "Q": torch.tensor([0.0, T, 0.0, 0.0], device=self.device),
+            "E": torch.tensor([0.0, -T, 0.0, 0.0], device=self.device),
             "ZEROS": torch.tensor([0.0, 0.0, 0.0, 0.0], device=self.device),
         }
 

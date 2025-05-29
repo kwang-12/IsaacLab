@@ -147,6 +147,15 @@ def body_projected_gravity_b(
     gravity_dir = asset.data.GRAVITY_VEC_W.unsqueeze(1)
     return math_utils.quat_rotate_inverse(body_quat, gravity_dir).view(env.num_envs, -1)
 
+def body_orientation_diff_obs(
+        env: ManagerBasedRLEnv,
+        command_name: str,
+        asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+) -> torch.Tensor:
+    asset: Articulation = env.scene[asset_cfg.name]
+    body_quat = asset.data.body_quat_w[:, asset_cfg.body_ids]
+    target_quat = env.command_manager.get_command(command_name)[:,2:]   # [qw, qx, qy, qz]
+    return math_utils.quat_mul(body_quat.squeeze(1), math_utils.quat_conjugate(target_quat))
 
 """
 Joint state.

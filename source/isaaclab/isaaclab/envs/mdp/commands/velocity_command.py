@@ -21,8 +21,13 @@ from isaaclab.markers import VisualizationMarkers
 if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
 
-    from .commands_cfg import NormalVelocityCommandCfg, UniformVelocityCommandCfg
+    from .commands_cfg import NormalVelocityCommandCfg, UniformVelocityCommandCfg, QuaternionVelocityCommandCfg
 
+@torch.jit.script
+def rotation_distance(object_rot, target_rot):
+    # Orientation alignment for the cube in hand and goal cube
+    quat_diff = math_utils.quat_mul(object_rot, math_utils.quat_conjugate(target_rot))
+    return 2.0 * torch.asin(torch.clamp(torch.norm(quat_diff[:, 1:4], p=2, dim=-1), max=1.0))  # changed quat convention
 
 class UniformVelocityCommand(CommandTerm):
     r"""Command generator that generates a velocity command in SE(2) from uniform distribution.
@@ -285,3 +290,140 @@ class NormalVelocityCommand(UniformVelocityCommand):
         self.vel_command_b[zero_vel_x_env_ids, 0] = 0.0
         self.vel_command_b[zero_vel_y_env_ids, 1] = 0.0
         self.vel_command_b[zero_vel_yaw_env_ids, 2] = 0.0
+
+
+class QuaternionVelocityCommand(CommandTerm):
+    """Generates commands for XY linear velocity and a target world orientation (quaternion).
+
+    The command output is a 6D tensor: [vx_target, vy_target, qw_target, qx_target, qy_target, qz_target].
+    Linear velocities (vx, vy) are sampled uniformly.
+    Target orientation (quaternion) is sampled using a randomization technique based on two
+    random parameters.
+    """
+
+    cfg: "QuaternionVelocityCommandCfg"  # Forward reference for type hint
+    asset: Articulation
+
+    def __init__(self, cfg: "QuaternionVelocityCommandCfg", env: ManagerBasedEnv):
+        """Initializes the quaternion velocity command generator.
+
+        Args:
+            cfg: The configuration for the command generator.
+            env: The environment instance.
+        """
+        super().__init__(cfg, env)
+
+        # obtain the robot asset
+        # -- robot
+        self.robot: Articulation = env.scene[self.cfg.asset_name]
+
+        # create buffers to store the command
+        # -- command: [vx, vy, qw, qx, qy, qz] (total 6)
+        self.command_dim = 6
+        self._command = torch.zeros(self.num_envs, self.command_dim, device=self.device)
+        # -- metrics:
+        self.metrics["error_vel_xy"] = torch.zeros(self.num_envs, device=self.device)
+        self.metrics["error_quat"] = torch.zeros(self.num_envs, device=self.device)
+
+        # Initialize visualization markers if debug_vis is enabled
+        if self.cfg.debug_vis:
+            # Goal velocity (XY) arrow marker
+            self._goal_vel_visualizer = VisualizationMarkers(self.cfg.goal_vel_visualizer_cfg)
+            # Current velocity (XY) arrow marker
+            self._current_vel_visualizer = VisualizationMarkers(self.cfg.current_vel_visualizer_cfg)
+            # Goal orientation frame marker
+            self._goal_quat_visualizer = VisualizationMarkers(self.cfg.goal_quat_visualizer_cfg)
+            # Current orientation frame marker
+            self._current_quat_visualizer = VisualizationMarkers(self.cfg.current_quat_visualizer_cfg)
+
+    def __str__(self) -> str:
+        """Return a string representation of the command generator."""
+        msg = "QuaternionVelocityCommand:\n"
+        msg += f"\tCommand dimension: {tuple(self.command.shape[1:])}\n"
+        msg += f"\tResampling time range: {self.cfg.resampling_time_range}\n"
+        return msg
+
+    @property
+    def command(self) -> torch.Tensor:
+        return self._command
+
+    """
+    Implementation specific functions.
+    """
+
+    def _update_metrics(self):
+        # time for which the command was executed
+        max_command_time = self.cfg.resampling_time_range[1]
+        max_command_step = max_command_time / self._env.step_dt
+        # logs data
+        self.metrics["error_vel_xy"] += (
+            torch.norm(self._command[:,:2] - self.robot.data.root_lin_vel_b[:,:2], dim=-1) / max_command_step
+        )
+        self.metrics["error_quat"] += (
+            rotation_distance(self.robot.data.root_quat_w, self._command[:,2:]) / max_command_step
+        )
+
+    def _resample_command(self, env_ids: Sequence[int]):
+        r = torch.empty(len(env_ids), device=self.device)
+        self._command[env_ids, 0] = r.uniform_(*self.cfg.ranges.lin_vel_x)
+        self._command[env_ids, 1] = r.uniform_(*self.cfg.ranges.lin_vel_y)
+        self._command[env_ids, 2:] = torch.randn((len(env_ids), 4), device=self.device)
+        self._command[env_ids, 2:] = self._command[env_ids, 2:] / self._command[env_ids, 2:].norm(dim=-1, keepdim=True)
+
+    def _update_command(self):
+        # do nothing
+        pass
+
+    def _set_debug_vis_impl(self, debug_vis: bool):
+        """Handles the visibility and updates of debug visualization markers."""
+        if debug_vis:
+            # Ensure all visualizers are initialized and set to visible
+            if hasattr(self, "_goal_vel_visualizer"): self._goal_vel_visualizer.set_visibility(True)
+            if hasattr(self, "_current_vel_visualizer"): self._current_vel_visualizer.set_visibility(True)
+            if hasattr(self, "_goal_quat_visualizer"): self._goal_quat_visualizer.set_visibility(True)
+            if hasattr(self, "_current_quat_visualizer"): self._current_quat_visualizer.set_visibility(True)
+        else:
+            # Hide all visualizers if debug_vis is False
+            if hasattr(self, "_goal_vel_visualizer"): self._goal_vel_visualizer.set_visibility(False)
+            if hasattr(self, "_current_vel_visualizer"): self._current_vel_visualizer.set_visibility(False)
+            if hasattr(self, "_goal_quat_visualizer"): self._goal_quat_visualizer.set_visibility(False)
+            if hasattr(self, "_current_quat_visualizer"): self._current_quat_visualizer.set_visibility(False)
+            
+    def _debug_vis_callback(self, event):
+        if not self.robot.is_initialized:
+            return
+        # Asset's current world position and orientation (for placing markers)
+        base_pos_w = self.robot.data.root_pos_w.clone()
+        base_pos_w[:, 2] += 0.5
+        base_pos_quat = self.robot.data.root_quat_w.clone()
+        
+        # visualize xy current/target velocity vector
+        vel_des_arrow_scale, vel_des_arrow_quat = self._resolve_xy_velocity_to_arrow(self.command[:, :2])
+        vel_arrow_scale, vel_arrow_quat = self._resolve_xy_velocity_to_arrow(self.robot.data.root_lin_vel_b[:, :2])
+        self._goal_vel_visualizer.visualize(base_pos_w, vel_des_arrow_quat, vel_des_arrow_scale)
+        self._current_vel_visualizer.visualize(base_pos_w, vel_arrow_quat, vel_arrow_scale)
+
+        # Visualize Goal Orientation (Frame)
+        if hasattr(self, "_goal_quat_visualizer"):
+            self._goal_quat_visualizer.visualize(translations=base_pos_w, orientations=self.command[:, 2:])
+
+        # Visualize Current Orientation (Frame)
+        if hasattr(self, "_current_quat_visualizer"):
+            self._current_quat_visualizer.visualize(translations=base_pos_w, orientations=base_pos_quat)
+        
+    def _resolve_xy_velocity_to_arrow(self, xy_velocity: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        """Converts the XY base velocity command to arrow direction rotation."""
+        # obtain default scale of the marker
+        default_scale = self._goal_vel_visualizer.cfg.markers["arrow"].scale
+        # arrow-scale
+        arrow_scale = torch.tensor(default_scale, device=self.device).repeat(xy_velocity.shape[0], 1)
+        arrow_scale[:, 0] *= torch.linalg.norm(xy_velocity, dim=1) * 3.0
+        # arrow-direction
+        heading_angle = torch.atan2(xy_velocity[:, 1], xy_velocity[:, 0])
+        zeros = torch.zeros_like(heading_angle)
+        arrow_quat = math_utils.quat_from_euler_xyz(zeros, zeros, heading_angle)
+        # convert everything back from base to world frame
+        base_quat_w = self.robot.data.root_quat_w
+        arrow_quat = math_utils.quat_mul(base_quat_w, arrow_quat)
+
+        return arrow_scale, arrow_quat

@@ -14,7 +14,7 @@ from isaaclab.utils import configclass
 from .null_command import NullCommand
 from .pose_2d_command import TerrainBasedPose2dCommand, UniformPose2dCommand
 from .pose_command import UniformPoseCommand
-from .velocity_command import NormalVelocityCommand, UniformVelocityCommand
+from .velocity_command import NormalVelocityCommand, UniformVelocityCommand, QuaternionVelocityCommand
 
 
 @configclass
@@ -128,6 +128,58 @@ class NormalVelocityCommandCfg(UniformVelocityCommandCfg):
     ranges: Ranges = MISSING
     """Distribution ranges for the velocity commands."""
 
+@configclass
+class QuaternionVelocityCommandCfg(CommandTermCfg):
+    """Configuration for the quaternion-based velocity and orientation command generator."""
+
+    class_type: type = QuaternionVelocityCommand  # Link to the new command class
+
+    asset_name: str = MISSING
+    """Name of the asset in the environment for which the commands are generated."""
+
+    @configclass
+    class Ranges:
+        """Uniform distribution ranges for the velocity and orientation commands."""
+
+        lin_vel_x: tuple[float, float] = MISSING
+        """Range for the linear-x velocity command (in m/s)."""
+
+        lin_vel_y: tuple[float, float] = MISSING
+        """Range for the linear-y velocity command (in m/s)."""
+
+    ranges: Ranges = MISSING
+    """Distribution ranges for the commands."""
+
+    # Visualization for velocity component
+    goal_vel_visualizer_cfg: VisualizationMarkersCfg = GREEN_ARROW_X_MARKER_CFG.replace(
+        prim_path="/Visuals/Command/velocity_goal_quat"  # Unique prim path
+    )
+    """The configuration for the goal velocity (XY) visualization marker."""
+
+    current_vel_visualizer_cfg: VisualizationMarkersCfg = BLUE_ARROW_X_MARKER_CFG.replace(
+        prim_path="/Visuals/Command/velocity_current_quat"  # Unique prim path
+    )
+    """The configuration for the current velocity (XY) visualization marker."""
+
+    # Visualization for orientation component
+    goal_quat_visualizer_cfg: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(
+        prim_path="/Visuals/Command/orientation_goal_quat"  # Unique prim path
+    )
+    """The configuration for the goal orientation visualization marker."""
+
+    current_quat_visualizer_cfg: VisualizationMarkersCfg = FRAME_MARKER_CFG.replace(
+        prim_path="/Visuals/Command/orientation_current_quat"  # Unique prim path
+    )
+    """The configuration for the current orientation visualization marker."""
+
+    # Set scales for visualization markers
+    # Velocity arrows scale
+    goal_vel_visualizer_cfg.markers["arrow"].scale = (0.5, 0.5, 0.5)
+    current_vel_visualizer_cfg.markers["arrow"].scale = (0.5, 0.5, 0.5)
+
+    # Orientation frames scale
+    goal_quat_visualizer_cfg.markers["frame"].scale = (0.2, 0.2, 0.2)
+    current_quat_visualizer_cfg.markers["frame"].scale = (0.2, 0.2, 0.2)
 
 @configclass
 class UniformPoseCommandCfg(CommandTermCfg):

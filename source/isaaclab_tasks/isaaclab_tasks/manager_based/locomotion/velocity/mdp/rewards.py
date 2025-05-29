@@ -115,6 +115,16 @@ def track_lin_vel_xy_yaw_frame_exp(
     )
     return torch.exp(-lin_vel_error / std**2)
 
+def track_lin_vel_xy_w_frame_exp(
+        env, std: float, command_name: str, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+) -> torch.Tensor:
+    asset = env.scene[asset_cfg.name]
+    lin_vel_error = torch.sum(torch.square(
+        asset.data.root_lin_vel_w[:,:2] - env.command_manager.get_command(command_name)[:,:2]), 
+        dim=1)
+    return torch.exp(-lin_vel_error / std**2)
+
+
 
 def track_ang_vel_z_world_exp(
     env, command_name: str, std: float, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
