@@ -147,6 +147,9 @@ class QuaternionVelocityCommandCfg(CommandTermCfg):
         lin_vel_y: tuple[float, float] = MISSING
         """Range for the linear-y velocity command (in m/s)."""
 
+        max_radian: float = MISSING
+        """Maximum rotation angle radian deviation from the default orientation"""
+
     ranges: Ranges = MISSING
     """Distribution ranges for the commands."""
 

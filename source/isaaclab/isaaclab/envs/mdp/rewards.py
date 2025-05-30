@@ -99,6 +99,9 @@ def ang_vel_xy_w_frame_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = Sc
     asset: RigidObject = env.scene[asset_cfg.name]
     return torch.sum(torch.square(asset.data.root_ang_vel_w[:, :2]), dim=1)
 
+def ang_vel_w_frame_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    asset: RigidObject = env.scene[asset_cfg.name]
+    return torch.sum(torch.square(asset.data.root_ang_vel_w[:, :]), dim=1)
 
 def flat_orientation_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
     """Penalize non-flat base orientation using L2 squared kernel.

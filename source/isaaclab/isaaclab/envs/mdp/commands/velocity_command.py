@@ -323,7 +323,7 @@ class QuaternionVelocityCommand(CommandTerm):
         self._command = torch.zeros(self.num_envs, self.command_dim, device=self.device)
         self._command[:, 2] = 1.0
         self._default_quat = torch.zeros(self.num_envs, 4, device=self.device)
-        self._default_quat[0] = 1.0
+        self._default_quat[:,0] = 1.0
         # -- metrics:
         self.metrics["error_vel_xy"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["error_quat"] = torch.zeros(self.num_envs, device=self.device)
@@ -371,7 +371,7 @@ class QuaternionVelocityCommand(CommandTerm):
         self._command[env_ids, 0] = r.uniform_(*self.cfg.ranges.lin_vel_x)
         self._command[env_ids, 1] = r.uniform_(*self.cfg.ranges.lin_vel_y)
         self._command[env_ids, 2:] = math_utils.sample_quat_within_angle(self._default_quat[env_ids, :],
-                                                                         0.1)
+                                                                         self.cfg.ranges.max_radian)
 
     def _update_command(self):
         # do nothing
@@ -401,8 +401,8 @@ class QuaternionVelocityCommand(CommandTerm):
         base_pos_quat = self.robot.data.root_quat_w.clone()
         
         # visualize xy current/target velocity vector
-        vel_des_arrow_scale, vel_des_arrow_quat = self._resolve_xy_velocity_to_arrow(self.command[:, :2])
-        vel_arrow_scale, vel_arrow_quat = self._resolve_xy_velocity_to_arrow(self.robot.data.root_lin_vel_b[:, :2])
+        vel_des_arrow_scale, vel_des_arrow_quat = self._resolve_velocity_to_arrow(self.command[:, :2])
+        vel_arrow_scale, vel_arrow_quat = self._resolve_velocity_to_arrow(self.robot.data.root_lin_vel_b[:, :2])
         self._goal_vel_visualizer.visualize(base_pos_w, vel_des_arrow_quat, vel_des_arrow_scale)
         self._current_vel_visualizer.visualize(base_pos_w, vel_arrow_quat, vel_arrow_scale)
 
@@ -414,7 +414,7 @@ class QuaternionVelocityCommand(CommandTerm):
         if hasattr(self, "_current_quat_visualizer"):
             self._current_quat_visualizer.visualize(translations=base_pos_w, orientations=base_pos_quat)
         
-    def _resolve_xy_velocity_to_arrow(self, xy_velocity: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def _resolve_velocity_to_arrow(self, xy_velocity: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Converts the XY base velocity command to arrow direction rotation."""
         # obtain default scale of the marker
         default_scale = self._goal_vel_visualizer.cfg.markers["arrow"].scale
@@ -425,8 +425,5 @@ class QuaternionVelocityCommand(CommandTerm):
         heading_angle = torch.atan2(xy_velocity[:, 1], xy_velocity[:, 0])
         zeros = torch.zeros_like(heading_angle)
         arrow_quat = math_utils.quat_from_euler_xyz(zeros, zeros, heading_angle)
-        # convert everything back from base to world frame
-        base_quat_w = self.robot.data.root_quat_w
-        arrow_quat = math_utils.quat_mul(base_quat_w, arrow_quat)
 
         return arrow_scale, arrow_quat
