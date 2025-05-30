@@ -864,6 +864,37 @@ def reset_root_state_uniform(
     asset.write_root_pose_to_sim(torch.cat([positions, orientations], dim=-1), env_ids=env_ids)
     asset.write_root_velocity_to_sim(velocities, env_ids=env_ids)
 
+def reset_root_state_clamped_angular_distance(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    position_range: dict[str, tuple[float, float]],
+    velocity_range: dict[str, tuple[float, float]],
+    max_radian: float,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+):
+    # extract the used quantities (to enable type-hinting)
+    asset: RigidObject | Articulation = env.scene[asset_cfg.name]
+    # get default root state
+    root_states = asset.data.default_root_state[env_ids].clone()
+    # extract ranges
+    xyz_pos_ranges = torch.tensor([position_range.get(key, (0.0, 0.0)) for key in ["x", "y", "z"]], device=asset.device)
+    xyz_vel_ranges = torch.tensor([velocity_range.get(key, (0.0, 0.0)) for key in ["x", "y", "z",
+                                                                                   "roll", "pitch", "yaw"]],
+                                                                                   device=asset.device)
+    # generate randomized root pose
+    xyz_pos_rand_samples = math_utils.sample_uniform(xyz_pos_ranges[:,0], xyz_pos_ranges[:,1], 
+                                                     (len(env_ids),3), device=asset.device)
+    orientations = math_utils.sample_quat_within_angle(root_states[:, 3:7], max_radian)
+    # generate randomized root velocity
+    xyzrpy_vel_rand_samples = math_utils.sample_uniform(xyz_vel_ranges[:,0], xyz_vel_ranges[:,1], 
+                                                        (len(env_ids),6), device=asset.device)
+    # assign new pose
+    positions = root_states[:, 0:3] + env.scene.env_origins[env_ids] + xyz_pos_rand_samples
+    asset.write_root_pose_to_sim(torch.cat([positions, orientations], dim=-1), env_ids=env_ids)
+
+    # assign new velocities
+    velocities = root_states[:, 7:13] + xyzrpy_vel_rand_samples
+    asset.write_root_velocity_to_sim(velocities, env_ids=env_ids)
 
 def reset_root_state_with_random_orientation(
     env: ManagerBasedEnv,

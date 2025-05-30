@@ -321,6 +321,9 @@ class QuaternionVelocityCommand(CommandTerm):
         # -- command: [vx, vy, qw, qx, qy, qz] (total 6)
         self.command_dim = 6
         self._command = torch.zeros(self.num_envs, self.command_dim, device=self.device)
+        self._command[:, 2] = 1.0
+        self._default_quat = torch.zeros(self.num_envs, 4, device=self.device)
+        self._default_quat[0] = 1.0
         # -- metrics:
         self.metrics["error_vel_xy"] = torch.zeros(self.num_envs, device=self.device)
         self.metrics["error_quat"] = torch.zeros(self.num_envs, device=self.device)
@@ -367,8 +370,8 @@ class QuaternionVelocityCommand(CommandTerm):
         r = torch.empty(len(env_ids), device=self.device)
         self._command[env_ids, 0] = r.uniform_(*self.cfg.ranges.lin_vel_x)
         self._command[env_ids, 1] = r.uniform_(*self.cfg.ranges.lin_vel_y)
-        self._command[env_ids, 2:] = torch.randn((len(env_ids), 4), device=self.device)
-        self._command[env_ids, 2:] = self._command[env_ids, 2:] / self._command[env_ids, 2:].norm(dim=-1, keepdim=True)
+        self._command[env_ids, 2:] = math_utils.sample_quat_within_angle(self._default_quat[env_ids, :],
+                                                                         0.1)
 
     def _update_command(self):
         # do nothing

@@ -1323,6 +1323,31 @@ def random_orientation(num: int, device: str) -> torch.Tensor:
     # normalize the quaternion
     return torch.nn.functional.normalize(quat, p=2.0, dim=-1, eps=1e-12)
 
+@torch.jit.script
+def sample_quat_within_angle(center_q: torch.Tensor, max_angle: float):
+    """
+    Sample unit quaternions within max_angle (radians) of center_q.
+    center_q: (..., 4) tensor of reference quaternions (unit norm)
+    max_angle: scalar max angular distance in radians
+    num_samples: how many samples to generate per center
+
+    Returns: (num_samples, 4) tensor of sampled quaternions
+    """
+    # Sample cos(ϕ) uniformly in [cosθ, 1]
+    u = torch.rand(center_q.shape[0], device=center_q.device)
+    cos_phi = (1.0 - u) + u * torch.cos(torch.tensor(max_angle, device=center_q.device) / 2.0)  # Uniform in [cosθ, 1]
+    sin_phi = torch.sqrt(1.0 - cos_phi**2)
+
+    # Uniform direction on the 3D "equator" orthogonal to the center quaternion
+    v = torch.randn((center_q.shape[0], 3), device=center_q.device)
+    v = v / v.norm(p=2, dim=-1, keepdim=True)
+
+    # Build local-frame quaternion (cosφ, sinφ·v̂)
+    local_quat = torch.cat([cos_phi.unsqueeze(-1), sin_phi.unsqueeze(-1) * v], dim=-1)  # shape: (N, 4)
+
+    # Rotate local quaternion into center frame
+    rotated_quat = quat_mul(center_q, local_quat)
+    return rotated_quat
 
 @torch.jit.script
 def random_yaw_orientation(num: int, device: str) -> torch.Tensor:
