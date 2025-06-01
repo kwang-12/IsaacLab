@@ -44,9 +44,9 @@ from isaaclab.utils.pretrained_checkpoint import get_published_pretrained_checkp
 
 from isaaclab_rl.rsl_rl import RslRlOnPolicyRunnerCfg, RslRlVecEnvWrapper
 
-from isaaclab_tasks.manager_based.locomotion.velocity.config.Qped.v7.flat_env_cfg import QpedFlatEnvCfg_PLAY
+from isaaclab_tasks.manager_based.locomotion.velocity.config.Qped.v9.flat_env_cfg import QpedFlatEnvCfg_PLAY
 
-TASK = "Isaac-Velocity-Flat-Qped-Play-v7"
+TASK = "Isaac-Velocity-Flat-Qped-Play-v9"
 RL_LIBRARY = "rsl_rl"
 
 class G1TrunkFlatDemo:
@@ -77,8 +77,6 @@ class G1TrunkFlatDemo:
         env_cfg.curriculum = None
         env_cfg.commands.base_velocity.ranges.lin_vel_x = (-2.0, 2.0)
         env_cfg.commands.base_velocity.ranges.lin_vel_y = (-2.0, 2.0)
-        env_cfg.commands.base_velocity.ranges.ang_vel_z = (-1.0, 1.0)
-        env_cfg.commands.base_velocity.ranges.heading = (0.0, 0.0)
         env_cfg.commands.base_velocity.debug_vis = False
         # wrap around environment for rsl-rl
         self.env = RslRlVecEnvWrapper(ManagerBasedRLEnv(cfg=env_cfg))
@@ -86,13 +84,12 @@ class G1TrunkFlatDemo:
         # load previously trained model
         ppo_runner = OnPolicyRunner(self.env, agent_cfg.to_dict(), log_dir=None, device=self.device)
         # ppo_runner.load(checkpoint)
-        ppo_runner.load("/home/kezhuo/qped_rl_isaaclab/IsaacLab/logs/rsl_rl/qped_flat/2025-05-27_19-10-57/model_9050.pt")
+        ppo_runner.load("/home/kezhuo/qped_rl_isaaclab/IsaacLab/logs/rsl_rl/qped_flat/2025-05-31_05-34-57/model_29999.pt")
         # obtain the trained policy for inference
         self.policy = ppo_runner.get_inference_policy(device=self.device)
 
         self.create_camera()
-        self.commands = torch.zeros(env_cfg.scene.num_envs, 4, device=self.device)
-        self.commands[:, 0:3] = self.env.unwrapped.command_manager.get_command("base_velocity")
+        self.commands = self.env.unwrapped.command_manager.get_command("base_velocity")[:,:2]
         self.set_up_keyboard()
         self._prim_selection = omni.usd.get_context().get_selection()
         self._selected_id = None
@@ -123,13 +120,11 @@ class G1TrunkFlatDemo:
         T = 2.0
         R = 1.0
         self._key_to_control = {
-            "UP": torch.tensor([T, 0.0, 0.0, 0.0], device=self.device),
-            "DOWN": torch.tensor([-T, 0.0, 0.0, 0.0], device=self.device),
-            "LEFT": torch.tensor([0.0, 0.0, -R, 0.0], device=self.device),
-            "RIGHT": torch.tensor([0.0, 0.0, R, 0.0], device=self.device),
-            "Q": torch.tensor([0.0, T, 0.0, 0.0], device=self.device),
-            "E": torch.tensor([0.0, -T, 0.0, 0.0], device=self.device),
-            "ZEROS": torch.tensor([0.0, 0.0, 0.0, 0.0], device=self.device),
+            "UP":       torch.tensor([  T, 0.0], device=self.device),
+            "DOWN":     torch.tensor([ -T, 0.0], device=self.device),
+            "LEFT":     torch.tensor([0.0,   T], device=self.device),
+            "RIGHT":    torch.tensor([0.0,  -T], device=self.device),
+            "ZEROS":    torch.tensor([0.0, 0.0], device=self.device),
         }
 
     def _on_keyboard_event(self, event):
@@ -181,7 +176,7 @@ class G1TrunkFlatDemo:
         # Reset commands for previously selected robot if a new one is selected
         if self._previous_selected_id is not None and self._previous_selected_id != self._selected_id:
             self.env.unwrapped.command_manager.reset([self._previous_selected_id])
-            self.commands[:, 0:3] = self.env.unwrapped.command_manager.get_command("base_velocity")
+            self.commands[:, :2] = self.env.unwrapped.command_manager.get_command("base_velocity")[:,:2]
 
     def _update_camera(self):
         """Updates the per-frame transform of the third-person view camera to follow
@@ -206,7 +201,11 @@ def main():
         with torch.inference_mode():
             action = demo_g1_trunk.policy(obs)
             obs, _, _, _ = demo_g1_trunk.env.step(action)
-            obs[:, 9:13] = demo_g1_trunk.commands
+            obs[:, :2] = demo_g1_trunk.commands
+            obs[:, 2] = 1.0
+            obs[:, 3] = 0.0
+            obs[:, 4] = 0.0
+            obs[:, 5] = 0.0
 
 if __name__ == "__main__":
     main()

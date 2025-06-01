@@ -86,6 +86,23 @@ def feet_air_time_positive(env, command_name: str, threshold: float, num_contact
     reward *= torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) > 0.1
     return reward
 
+def feet_air_time_at_touchdown_exp(env: ManagerBasedRLEnv, std: float, command_name: str, sensor_cfg: SceneEntityCfg, threshold: float
+) -> torch.Tensor:
+    """
+    similar to feet_air_time() but use an exponential kernel to encourage air time near the desired duration
+    """
+    # extract the used quantities (to enable type-hinting)
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    # compute the reward
+    first_contact = contact_sensor.compute_first_contact(env.step_dt)[:, sensor_cfg.body_ids]
+    last_air_time = contact_sensor.data.last_air_time[:, sensor_cfg.body_ids]
+    modified_air_time = last_air_time * first_contact       # last_air_time if just touchdown, 0 if still in-air or has already touchdown
+    reward = torch.sum(torch.square(modified_air_time - threshold), dim=1)
+    reward = torch.exp(-reward / std**2)
+    # no reward for zero command
+    reward *= torch.norm(env.command_manager.get_command(command_name)[:, :2], dim=1) > 0.1
+    return reward
+
 def feet_slide(env, sensor_cfg: SceneEntityCfg, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
     """Penalize feet sliding.
 
@@ -101,6 +118,22 @@ def feet_slide(env, sensor_cfg: SceneEntityCfg, asset_cfg: SceneEntityCfg = Scen
     body_vel = asset.data.body_lin_vel_w[:, asset_cfg.body_ids, :2]
     reward = torch.sum(body_vel.norm(dim=-1) * contacts, dim=1)
     return reward
+
+def feet_swing_height(env: ManagerBasedRLEnv, command_name: str, sensor_cfg: SceneEntityCfg, 
+                      max_height: float, std: float,
+                      asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")) -> torch.Tensor:
+    asset = env.scene[asset_cfg.name]
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    floats = contact_sensor.data.net_forces_w_history[:, :, sensor_cfg.body_ids, :].norm(dim=-1).max(dim=1)[0] < 1.0
+    leg_xy_vel = asset.data.body_lin_vel_w[:, asset_cfg.body_ids, :2]
+    leg_xy_vel_norm = torch.norm(leg_xy_vel, dim=-1)
+    modified_leg_xy_vel_norm = leg_xy_vel_norm * floats         # overwrite to 0 if is in contact
+    target_xy_vel = env.command_manager.get_command(command_name)[:, :2]
+    target_xy_vel_norm = torch.norm(target_xy_vel, dim=-1)
+    clipped_vel_ratio = torch.clip(modified_leg_xy_vel_norm / target_xy_vel_norm.unsqueeze(1), min=0.0, max=2.0)
+    expected_leg_height = clipped_vel_ratio / 2.0 * max_height
+    height_error = torch.sum(torch.abs(asset.data.body_pos_w[:, asset_cfg.body_ids, 2] - expected_leg_height), dim=-1)
+    return torch.exp(-height_error / std**2)
 
 
 def track_lin_vel_xy_yaw_frame_exp(
