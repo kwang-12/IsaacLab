@@ -229,19 +229,9 @@ class DirectMARLEnv(gym.Env):
 
     @property
     def num_agents(self) -> int:
-        """Number of current agents.
-
-        The number of current agents may change as the environment progresses (e.g.: agents can be added or removed).
+        """Number of agents as configured in config
         """
-        return len(self.agents)
-
-    @property
-    def max_num_agents(self) -> int:
-        """Number of all possible agents the environment can generate.
-
-        This value remains constant as the environment progresses.
-        """
-        return len(self.possible_agents)
+        return len(self.cfg.possible_agents)
 
     @property
     def unwrapped(self) -> DirectMARLEnv:
@@ -328,7 +318,6 @@ class DirectMARLEnv(gym.Env):
 
         # update observations and the list of current agents (sorted as in possible_agents)
         self.obs_dict = self._get_observations()
-        self.agents = [agent for agent in self.possible_agents if agent in self.obs_dict]
 
         # return observations
         return self.obs_dict, self.extras
@@ -410,7 +399,6 @@ class DirectMARLEnv(gym.Env):
 
         # update observations and the list of current agents (sorted as in possible_agents)
         self.obs_dict = self._get_observations()
-        self.agents = [agent for agent in self.possible_agents if agent in self.obs_dict]
 
         # add observation noise
         # note: we apply no noise to the state space (since it is used for centralized training or critic networks)
@@ -422,7 +410,7 @@ class DirectMARLEnv(gym.Env):
         # return observations, rewards, resets and extras
         return self.obs_dict, self.reward_dict, self.terminated_dict, self.time_out_dict, self.extras
 
-    def state(self) -> StateType | None:
+    def state(self) -> dict[AgentID, torch.Tensor]:
         """Returns the state for the environment.
 
         The state-space is used for centralized training or asymmetric actor-critic architectures. It is configured
@@ -431,18 +419,7 @@ class DirectMARLEnv(gym.Env):
         Returns:
             The states for the environment, or None if :attr:`DirectMARLEnvCfg.state_space` parameter is zero.
         """
-        if not self.cfg.state_space:
-            return None
-        # concatenate and return the observations as state
-        # FIXME: This implementation assumes the spaces are fundamental ones. Fix it to support composite spaces
-        if isinstance(self.cfg.state_space, int) and self.cfg.state_space < 0:
-            self.state_buf = torch.cat(
-                [self.obs_dict[agent].reshape(self.num_envs, -1) for agent in self.cfg.possible_agents], dim=-1
-            )
-        # compute and return custom environment state
-        else:
-            self.state_buf = self._get_states()
-        return self.state_buf
+        return self._get_states()
 
     @staticmethod
     def seed(seed: int = -1) -> int:
@@ -597,43 +574,18 @@ class DirectMARLEnv(gym.Env):
 
     def _configure_env_spaces(self):
         """Configure the spaces for the environment."""
-        self.agents = self.cfg.possible_agents
-        self.possible_agents = self.cfg.possible_agents
-
-        # show deprecation message and overwrite configuration
-        if self.cfg.num_actions is not None:
-            omni.log.warn("DirectMARLEnvCfg.num_actions is deprecated. Use DirectMARLEnvCfg.action_spaces instead.")
-            if isinstance(self.cfg.action_spaces, type(MISSING)):
-                self.cfg.action_spaces = self.cfg.num_actions
-        if self.cfg.num_observations is not None:
-            omni.log.warn(
-                "DirectMARLEnvCfg.num_observations is deprecated. Use DirectMARLEnvCfg.observation_spaces instead."
-            )
-            if isinstance(self.cfg.observation_spaces, type(MISSING)):
-                self.cfg.observation_spaces = self.cfg.num_observations
-        if self.cfg.num_states is not None:
-            omni.log.warn("DirectMARLEnvCfg.num_states is deprecated. Use DirectMARLEnvCfg.state_space instead.")
-            if isinstance(self.cfg.state_space, type(MISSING)):
-                self.cfg.state_space = self.cfg.num_states
-
-        # set up observation and action spaces
         self.observation_spaces = {
-            agent: spec_to_gym_space(self.cfg.observation_spaces[agent]) for agent in self.cfg.possible_agents
+            agent_name: spec_to_gym_space(space) \
+                for agent_name, space in self.cfg.observation_spaces.items()
         }
         self.action_spaces = {
-            agent: spec_to_gym_space(self.cfg.action_spaces[agent]) for agent in self.cfg.possible_agents
+            agent_name: spec_to_gym_space(space) \
+                for agent_name, space in self.cfg.action_spaces.items()
         }
-
-        # set up state space
-        if not self.cfg.state_space:
-            self.state_space = None
-        if isinstance(self.cfg.state_space, int) and self.cfg.state_space < 0:
-            self.state_space = gym.spaces.flatten_space(
-                gym.spaces.Tuple([self.observation_spaces[agent] for agent in self.cfg.possible_agents])
-            )
-        else:
-            self.state_space = spec_to_gym_space(self.cfg.state_space)
-
+        self.state_spaces = {
+            agent_name: spec_to_gym_space(space) \
+                for agent_name, space in self.cfg.state_space.items()
+        }
         # instantiate actions (needed for tasks for which the observations computation is dependent on the actions)
         self.actions = {
             agent: sample_space(self.action_spaces[agent], self.sim.device, batch_size=self.num_envs, fill_value=0)
@@ -713,7 +665,7 @@ class DirectMARLEnv(gym.Env):
         raise NotImplementedError(f"Please implement the '_get_observations' method for {self.__class__.__name__}.")
 
     @abstractmethod
-    def _get_states(self) -> StateType:
+    def _get_states(self) -> dict[AgentID, torch.Tensor]:
         """Compute and return the states for the environment.
 
         This method is only called (and therefore has to be implemented) when the :attr:`DirectMARLEnvCfg.state_space`
